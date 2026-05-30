@@ -100,7 +100,7 @@ class SimulationAssembly(AbstractAssembly):
     @property
     def sys_clk_period(self) -> float: # TODO: migrate to `amaranth.hdl.Period`
         # Reduced from 36 or 48 MHz to 1 MHz to improve test performance.
-        return 1/1000000
+        return 1/1000000000
 
     @contextmanager
     def add_applet(self, applet: Any) -> Generator[None]:
