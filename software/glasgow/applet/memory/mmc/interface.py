@@ -25,7 +25,7 @@ class MmcInterface:
     uhsii: bool
     s18a: bool
 
-    def __init__(self, interface, logger):
+    def __init__(self, interface, logger: Logger):
         self.lower  = interface
         self.logger = logger
 

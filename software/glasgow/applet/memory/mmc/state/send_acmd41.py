@@ -37,7 +37,7 @@ class SendACmd41(BaseState):
             msg = R1Response(m)
             print(msg)
             if not msg.base.crc_valid():
-                raise MmcError("CMD55 response has incorrect CRC value")
+                raise MmcError(f"CMD55 response has incorrect CRC value, got {hex(msg.base.crc)}, expected {msg.base.calc_crc()}")
             if not msg.status.app_cmd:
                 raise MmcError("CMD55 response didn't set app cmd flag")
             # Send ACMD41
@@ -45,14 +45,14 @@ class SendACmd41(BaseState):
                 # Send a payload of 0 to perform an inquiry
                 await iface.write_cmd_send_bcr_48(build_acmd41(hcs=False, xpc=False, voltage=0))
             else:
-                # busy=0 | hcs(1) | fb=0 | xpc(1) | 3.3v-3.4v(1) | 3.2v_3.3v (1)
-                await iface.write_cmd_send_bcr_48(build_acmd41(hcs=True, xpc=True, voltage=0b0011000000000000))
+                # busy=0 | hcs(1) | fb=0 | xpc(0) | 3.3v-3.4v(1) | 3.2v_3.3v (1)
+                await iface.write_cmd_send_bcr_48(build_acmd41(hcs=True, xpc=False, voltage=0b0011000000000000))
         # If this is the response to the ACMD
         elif m.cmd == 63:
             msg = Acmd41Response(m)
             print(msg)
             if msg.base.crc != 0x7f:
-                raise MmcError("ACMD41 response has incorrect CRC value")
+                raise MmcError(f"ACMD41 response has incorrect CRC value, got {hex(msg.base.crc)}, expected 0x7f")
 
             if self.inquiry:
                 iface.ocr = msg.ocr

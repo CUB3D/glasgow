@@ -79,6 +79,16 @@ class CSDRegister:
             self.vdd_w_curr_max = None
             self.c_size_mult = None
 
+        # Reserved
+        else:
+            self.c_size = None
+            self.vdd_r_curr_min = None
+            self.vdd_r_curr_max = None
+            self.vdd_w_curr_min = None
+            self.vdd_w_curr_max = None
+            self.c_size_mult = None
+
+
     def get_capacity_v1(self):
         blklen = 2 ** self.read_bl_len
         mult = 2 ** (self.c_size_mult + 2)
