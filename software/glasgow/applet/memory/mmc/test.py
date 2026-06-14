@@ -3,10 +3,10 @@ from amaranth import *
 from amaranth.sim import SimulatorContext
 
 from glasgow.applet import GlasgowAppletTestCase, applet_simulation_test, synthesis_test
-from . import ControlMmcApplet
+from . import MemoryMmcApplet
 
 
-class ControlMmcAppletTestCase(GlasgowAppletTestCase, applet=ControlMmcApplet):
+class MemoryMmcAppletTestCase(GlasgowAppletTestCase, applet=MemoryMmcApplet):
     @synthesis_test
     def test_build_opl2(self):
         self.assertBuilds(args=["--clk", "A0", "--cmd", "A1", "--vcc", "A2", "--dat0", "A3", "--test", "A4"])

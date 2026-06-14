@@ -1,6 +1,6 @@
 from typing import Optional
 
-from glasgow.applet.control.emmc.base_msg import BaseMsg
+from glasgow.applet.memory.mmc.base_msg import BaseMsg
 
 
 class BaseState:

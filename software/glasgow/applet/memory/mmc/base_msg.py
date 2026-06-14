@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
-from glasgow.applet.control.emmc.cmd import reverse_bits, crc7
-from glasgow.applet.control.emmc.msg_dir import MsgDir
+from glasgow.applet.memory.mmc.cmd import reverse_bits, crc7
+from glasgow.applet.memory.mmc.msg_dir import MsgDir
 
 
 @dataclass

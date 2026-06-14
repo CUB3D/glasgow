@@ -13,7 +13,7 @@ from amaranth.lib.fifo import SyncFIFO
 from amaranth.lib.io import Direction
 from amaranth.lib.memory import WritePort, Memory
 
-from glasgow.applet.control.mmc.registers.ocr import OCRVoltageWindow
+from glasgow.applet.memory.mmc.registers.ocr import OCRVoltageWindow
 from .base_msg import BaseMsg
 from .cmd import build_cmd0, reverse_bits, crc7, build_cmd8
 from .interface import MmcInterface, IN_CMD_SEND_BCR48, IN_CMD_SEND_BCR136, IN_CMD_SEND_DATA48, IN_CMD_FILL_BUFFER, \
@@ -531,7 +531,7 @@ fill buffer - 3
 take next 512 bytes and put in buffer
 """
 
-class ControlMmcApplet(GlasgowApplet):
+class MemoryMmcApplet(GlasgowApplet):
     logger = logging.getLogger(__name__)
     help = ""
     description = """
@@ -574,7 +574,7 @@ class ControlMmcApplet(GlasgowApplet):
     @classmethod
     def tests(cls):
         from . import test
-        return test.ControlMmcAppletTestCase
+        return test.MemoryMmcAppletTestCase
 
     @classmethod
     def add_interact_arguments(cls, parser):

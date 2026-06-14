@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from glasgow.applet.control.emmc.card_state import CardState
+from glasgow.applet.memory.mmc.card_state import CardState
 
 
 @dataclass
