@@ -11,21 +11,16 @@ from glasgow.applet.memory.mmc.state.base import BaseState
 class R2MsgCid:
     cid: CIDRegister
 
-    def __init__(self, v: int):
-        res = (v >> 128) & 0b111111
-        self.cid = CIDRegister((v & 0xFFFFFFFF_FFFFFFFF_FFFFFFFF_FFFFFFFF))
+    def __init__(self, msg: BaseMsg):
+        self.cid = CIDRegister((msg.payload & 0xFFFFFFFF_FFFFFFFF_FFFFFFFF_FFFFFFFF))
 
 class SendCmd2(BaseState):
     async def on_message(self, m: BaseMsg, iface: MmcInterface):
         if m.cmd == SDCommand.CMD2.value:
-            #TODO: msg struct
-            # This is a GET_ALL_CID response
-            x = m.payload
-            print(bin(x))
-            cid = (x & 0xFFFFFFFF_FFFFFFFF_FFFFFFFF_FFFFFFFF)
-            print("cid", hex(cid), bin(cid))
+            #TODO: crc check and how to fit with basemsg
 
-            c = R2MsgCid(x)
+            c = R2MsgCid(m)
+            iface.card_cid = c.cid
             print("mid", c.cid.mid)
             print("oem", c.cid.oem)
             print("prv", c.cid.prv)

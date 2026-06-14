@@ -69,14 +69,19 @@ def build_cmd55(rca: int):
     """
     return build_command(cmd=55, arg=rca<<16)
 
-def build_acmd41():
+def build_acmd41(hcs: bool, xpc: bool, voltage: int):
     """
     Builds the SD_SEND_OP_COND app command that either requests the OCR or checks if the card can support a
     given voltage range
     :return:
     """
-    # busy=0 | hcs(1) | fb=0 | xpc(1) | 3.3v-3.4v(1) | 3.2v_3.3v (1)
-    return build_command(cmd=41, arg=0b0_1_0_1_000_0_0011000000000000_00000000)
+    arg = 0
+    if hcs:
+        arg |= 1<<30
+    if xpc:
+        arg |= 1<<28
+    arg |= voltage << 8
+    return build_command(cmd=41, arg=arg)
 
 def build_cmd2():
     """
@@ -95,6 +100,12 @@ def build_cmd7(rca: int):
     Builds the SELECT_CARD command that switches a specific card to the transfer state
     """
     return build_command(cmd=7, arg=rca<<16)
+
+def build_cmd9(rca: int):
+    """
+    Builds the SEND_CSD command that requests the CSD of the specified card
+    """
+    return build_command(cmd=9, arg=rca<<16)
 
 def build_acmd51():
     """

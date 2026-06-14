@@ -2,8 +2,6 @@
 # https://www.taterli.com/wp-content/uploads/2017/05/Physical-Layer-Simplified-SpecificationV6.0.pdf
 
 import logging
-from dataclasses import dataclass
-from typing import List
 
 import amaranth
 from amaranth import *
@@ -16,6 +14,7 @@ from amaranth.lib.memory import WritePort, Memory
 from glasgow.applet.memory.mmc.registers.ocr import OCRVoltageWindow
 from .base_msg import BaseMsg
 from .cmd import build_cmd0, reverse_bits, crc7, build_cmd8
+from .command_queue import SDCommandQueue
 from .interface import MmcInterface, IN_CMD_SEND_BCR48, IN_CMD_SEND_BCR136, IN_CMD_SEND_DATA48, IN_CMD_FILL_BUFFER, \
     IN_CMD_READ_BUFFER, IN_CMD_RESET
 from .registers.cid import CIDRegister
@@ -28,7 +27,8 @@ from .state.send_cmd2 import SendCmd2
 from .state.send_cmd3 import SendCmd3
 from .state.send_cmd7 import SendCmd7
 from .state.send_cmd8 import SendCmd8
-from ... import GlasgowApplet
+from .state.send_cmd9 import SendCmd9
+from ... import GlasgowApplet, GlasgowAppletError
 from ....gateware.clockgen import *
 from ....legacy import DeprecatedTarget
 from ....support.data_logger import DataLogger
@@ -36,15 +36,12 @@ from ....support.data_logger import DataLogger
 
 # TODO: test on actual emmc
 # TODO: extended regs
-# Refactor cmd builder
-# Add erase subcommand
 # read subcommand addr and size
-# Clean up cmd structure
-# Multiple gpios for vcc current
 # response timeouts
+# 4-bit bus
 
 class MmcPkt(Struct):
-    cmd: 50 #TODO: why 50, not 48
+    cmd: 48
     has_resp: 1
     resp_size: 1
     has_data: 1
@@ -55,47 +52,8 @@ def mk_bc(cmd):
 def mk_bcr(cmd, resp_length=48):
     return Signal(MmcPkt, init={"cmd": cmd, "has_resp": 1, "resp_size": resp_length == 136, "has_data": 0}).as_value()
 
-# def get_acmd6():
-#     cmd8_part1 = 0b0 \
-#                  | (1 << 1) \
-#                  | (reverse_bits(0b000110, 6) << 2) \
-#                  | (reverse_bits(0x0000_0003, 32) << 8)
-#
-#     crc = crc7(reverse_bits(cmd8_part1, 40).to_bytes(5, byteorder="big"))
-#
-#     cmd8_full = cmd8_part1 \
-#                 | (reverse_bits(crc, 7) << 40) \
-#                 | (1 << 47)
-#
-#     return cmd8_full
-
-import random
-
-# CLK_HZ = 100+5*13
-
-CLK_HZ = 5 * random.randint(20, 100)
-print(CLK_HZ)
 
 CLK_HZ=700
-# CLK_HZ=375
-# CLK_HZ=450
-
-# def get_cmd9(rca):
-#     """
-#     SEND_CSD
-#     """
-#     cmd_no_crc = 0b0 \
-#                  | (1 << 1) \
-#                  | (reverse_bits(0b001001, 6) << 2) \
-#                  | (reverse_bits(rca << 16, 32) << 8)
-#
-#     crc = crc7(reverse_bits(cmd_no_crc, 40).to_bytes(5, byteorder="big"))
-#
-#     cmd = cmd_no_crc \
-#                 | (reverse_bits(crc, 7) << 40) \
-#                 | (1 << 47)
-#
-#     return cmd
 
 class MmcHelper(Elaboratable):
     queue: SyncFIFO
@@ -543,7 +501,6 @@ class MemoryMmcApplet(GlasgowApplet):
 
         access.add_pins_argument(parser, "clk", required=True)
         access.add_pins_argument(parser, "cmd", required=True)
-        access.add_pins_argument(parser, "vcc", required=True)
         access.add_pins_argument(parser, "dat0", required=True)
         access.add_pins_argument(parser, "dat1", required=True)
         access.add_pins_argument(parser, "dat2", required=True)
@@ -569,7 +526,7 @@ class MemoryMmcApplet(GlasgowApplet):
 
     async def run(self, device, args):
         iface = await device.demultiplexer.claim_interface(self, self.mux_interface, args, pull_high={args.dat0, args.dat1, args.dat2, args.dat3, args.cmd})
-        return MmcInterface(iface)
+        return MmcInterface(iface, self.logger)
 
     @classmethod
     def tests(cls):
@@ -580,81 +537,100 @@ class MemoryMmcApplet(GlasgowApplet):
     def add_interact_arguments(cls, parser):
         p_operation = parser.add_subparsers(dest="operation", metavar="OPERATION", required=True)
 
-        p_info = p_operation.add_parser("info", help="Get card info")
-        DataLogger.add_subparsers(p_info)
+        p_operation.add_parser("info", help="Get card info")
+        p_operation.add_parser("read", help="Read card")
 
-        p_erase = p_operation.add_parser("erase", help="Erase card")
-        DataLogger.add_subparsers(p_erase)
-
-        p_read = p_operation.add_parser("read", help="Read card")
-        DataLogger.add_subparsers(p_read)
-
-    async def interact(self, device, args, iface):
+    async def interact(self, device, args, iface: MmcInterface):
         q = SDCommandQueue()
+
+        # Init all the common commands that we always need to issue
         q.add(SendCmd8())
-        q.add(SendACmd41())
+        q.add(SendACmd41(inquiry=True))
+        q.add(SendACmd41(inquiry=False))
         q.add(SendCmd2())
         q.add(SendCmd3())
-        q.add(SendCmd7())
-        # q.add(SendACmd51())
-        q.add(SendCmd16())
-        q.add(SendCmd17())
 
-        while True:
-            typ = await iface.read_1()
-            print("ty", hex(typ))
-            if typ == 0xa1:
-                x = await iface.read_5()
+        # From this point the card will be in the Stby state, with a valid RCA
+        if args.operation == "info":
+            q.add(SendCmd9())
+            q.add(SendCmd7())
+            q.add(SendACmd51())
+        elif args.operation == "read":
+            q.add(SendCmd7())
+            q.add(SendCmd16()) # set block size
+            q.add(SendCmd17()) # start reading
 
-                m = BaseMsg(x)
+        # Process the cmd queue
+        await q.process_incoming_messages(iface)
 
-                print("cmd", m.cmd, bin(m.cmd))
-                print("payload", hex(m.payload), bin(m.payload))
-                print("crc", hex(m.crc), bin(m.crc))
-                print("Valid", "TRUE" if m.crc_valid() else "!FALSE!")
-
-                print(", ".join([x for x in ("00000000" + bin(x)[2:])[-48:]]))
-
-                await q.handle_msg(m, iface)
-
-            if typ == 0xa2:
-                x = await iface.read_1()
-                print(", ".join([x for x in ("00000000" + bin(x)[2:])[-8:]]))
-
-            # CMD2 resp
-            if typ == 0xa3:
-                x = await iface.read_17()
-                y = BaseMsg(0)
-                y.cmd = 2
-                y.payload = x
-
-                await q.handle_msg(y, iface)
-
-            print("-----------")
-
-#TODO: fallback values for enums
-
-
-
-# TODO: state machine?
-class SDCommandQueue:
-    queue: List[BaseState]
-
-    def __init__(self):
-        self.queue = []
-    
-    def add(self, x: BaseState):
-        self.queue.append(x)
-
-    async def handle_msg(self, m: BaseMsg, iface: MmcInterface):
-        print("q", self.queue[0], "m", m)
-        res = await self.queue[0].on_message(m, iface)
-        if res:
-            self.queue.pop(0)
-            await self.queue[0].on_new_state(iface)
-
-
-
-
-
-
+        # If we are in info state, we should report what we found
+        if args.operation == "info":
+            log = iface.logger
+            log.info("--- SD card info ---")
+            log.info("Operating Conditions Register (OCR:")
+            log.info("- Card Capacity Status:", iface.ccs)
+            log.info("- UHS-II Card:", iface.uhsii)
+            log.info("- 1.8v Switching Accepted:", iface.s18a)
+            log.info("- 2.7v-2.8v", iface.ocr.v27_28)
+            log.info("- 2.8v-2.0v", iface.ocr.v28_29)
+            log.info("- 2.9v-3.0v", iface.ocr.v29_30)
+            log.info("- 3.0v-3.1v", iface.ocr.v30_31)
+            log.info("- 3.1v-3.2v", iface.ocr.v31_32)
+            log.info("- 3.2v-3.3v", iface.ocr.v32_33)
+            log.info("- 3.3v-3.4v", iface.ocr.v33_34)
+            log.info("- 3.4v-3.5v", iface.ocr.v34_35)
+            log.info("- 3.5v-3.6v", iface.ocr.v35_36)
+            log.info("Card IDentification Register (CID):")
+            log.info("Raw Value:", hex(iface.card_cid.raw))
+            log.info("- mid", iface.card_cid.mid)
+            log.info("- oem", iface.card_cid.oem)
+            log.info("- prv", iface.card_cid.prv)
+            log.info("- pnm", iface.card_cid.pnm)
+            log.info("- psn", iface.card_cid.psn)
+            log.info("- mdt", iface.card_cid.mdt)
+            log.info("RCA:", hex(iface.rca))
+            log.info("SD CARD Configuration Register (SCR):")
+            log.info("Raw Value:", hex(iface.card_scr.raw))
+            log.info("- SD Spec:", iface.card_scr.physical_spec_version())
+            log.info("- data_status_after_erases:", iface.card_scr.data_stat_after_erase)
+            log.info("- SD Security:", iface.card_scr.sd_security.description())
+            log.info("- SD Bus Widths:")
+            log.info("- - 1 bit:", (iface.card_scr.sd_bus_widths & 1) != 0)
+            log.info("- - 4 bit:", ((iface.card_scr.sd_bus_widths >>2) & 1) != 0)
+            log.info("- Extended Security Supported:", iface.card_scr.ex_security != 0)
+            log.info("- Command Support:")
+            log.info("- - Speed Class Control:", (iface.card_scr.cmd_support & 1) != 0)
+            log.info("- - Set Block Count:", ((iface.card_scr.cmd_support >> 1) & 1) != 0)
+            log.info("- - Extension Register Single Block:", ((iface.card_scr.cmd_support >> 2) & 1) != 0)
+            log.info("- - Extension Register Multi-Block:", ((iface.card_scr.cmd_support >> 3) & 1) != 0)
+            log.info("Card-Specific Data Register (CSD):")
+            #TODO: break down first few fields more
+            csd = iface.card_csd
+            log.info("- CSD Structure version:", csd.csd_structure)
+            log.info("- TAAC:", csd.taac)
+            log.info("- NSAC:", csd.nsac)
+            log.info("- Transfer Speed:", csd.tran_speed)
+            log.info("- CCC:", csd.ccc)
+            log.info("- Max Read Data Block Length:", csd.read_bl_len)
+            log.info("- Partial Blocks for Read Allowed:", csd.read_bl_partial)
+            log.info("- Write Block Misalignment:", csd.write_blk_misalign)
+            log.info("- Read Block Misalignment:", csd.read_blk_misalign)
+            log.info("- DSR implemented:", csd.dsr_imp)
+            log.info("- Capacity:", csd.get_capacity())
+            if csd.csd_structure == 1:
+                log.info("- Max Read Current @VDD min:", csd.vdd_r_curr_min)
+                log.info("- Max Read Current @VDD max:", csd.vdd_r_curr_max)
+                log.info("- Max Write Current @VDD min:", csd.vdd_w_curr_min)
+                log.info("- Max Write Current @VDD max:", csd.vdd_w_curr_max)
+            log.info("- Erase Single Block Enable:", csd.erase_blk_en)
+            log.info("- Erase Sector Size:", csd.sector_size)
+            log.info("- Write Protect Group Size:", csd.wp_grp_size)
+            log.info("- Write Protect Group Enable:", csd.wp_grp_enable)
+            log.info("- Write Speed Factor:", csd.r2w_factor)
+            log.info("- Max Write Data Block Length:", csd.write_bl_len)
+            log.info("- Partial Blocks for Write Allowed:", csd.write_bl_partial)
+            log.info("- File Format Group:", csd.file_format_grp)
+            log.info("- Copy Flag:", csd.copy)
+            log.info("- Permanent Write Protection:", csd.perm_write_protect)
+            log.info("- Temporary Write Protection:", csd.tmp_write_protect)
+            log.info("- File Format:", csd.file_format)

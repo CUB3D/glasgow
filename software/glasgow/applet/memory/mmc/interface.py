@@ -1,3 +1,11 @@
+from logging import Logger
+from typing import Optional
+
+from glasgow.applet.memory.mmc.registers.cid import CIDRegister
+from glasgow.applet.memory.mmc.registers.csd import CSDRegister
+from glasgow.applet.memory.mmc.registers.ocr import OCRVoltageWindow
+from glasgow.applet.memory.mmc.registers.scr import SCRRegister
+
 IN_CMD_SEND_BCR48 = 0x01
 IN_CMD_SEND_BCR136 = 0x02
 IN_CMD_SEND_DATA48 = 0x03
@@ -6,8 +14,20 @@ IN_CMD_READ_BUFFER = 0x05
 IN_CMD_RESET = 0x06
 
 class MmcInterface:
-    def __init__(self, interface):
+    logger: Logger
+
+    card_cid: CIDRegister
+    rca: int
+    card_scr: SCRRegister
+    card_csd: CSDRegister
+    ocr: OCRVoltageWindow
+    ccs: bool
+    uhsii: bool
+    s18a: bool
+
+    def __init__(self, interface, logger):
         self.lower  = interface
+        self.logger = logger
 
     async def read_5(self):
         x = int.from_bytes(await self.lower.read(48 // 8), byteorder="big")
@@ -52,8 +72,9 @@ class MmcInterface:
             buf.append(data[0])
 
             print(hex(data[0]), end=" ")
-            if x % 8 == 0:
+            if x % 8 == 7:
                 print()
+        print("###")
 
 
         return buf

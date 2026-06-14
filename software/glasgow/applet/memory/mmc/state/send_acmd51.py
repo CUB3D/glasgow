@@ -1,18 +1,23 @@
+from glasgow.applet.memory.mmc.mmc_error import MmcError
 from glasgow.applet.memory.mmc.base_msg import BaseMsg
 from glasgow.applet.memory.mmc.card_status import CardStatus
 from glasgow.applet.memory.mmc.cmd import build_acmd51, build_cmd55
+from glasgow.applet.memory.mmc.r1_response import R1Response
 from glasgow.applet.memory.mmc.interface import MmcInterface
-from glasgow.applet.memory.mmc.registers.scr import CSRRegister
+from glasgow.applet.memory.mmc.registers.scr import SCRRegister
 from glasgow.applet.memory.mmc.sd_command import SDCommand
 from glasgow.applet.memory.mmc.state.base import BaseState
-
 
 class SendACmd51(BaseState):
     async def on_message(self, m: BaseMsg, iface: MmcInterface):
         # If this is a response to the CMD55
         if m.cmd == SDCommand.CMD55.value:
-            status = CardStatus(m.payload)
-            print(status)
+            msg = R1Response(m)
+            print(msg)
+            if not msg.base.crc_valid():
+                raise MmcError("CMD55 response has incorrect CRC value")
+            if not msg.status.app_cmd:
+                raise MmcError("CMD55 response didn't set app cmd flag")
             # Send ACMD51
             await iface.write_cmd_send_data_48(build_acmd51())
         # If this is the response to the ACMD
@@ -28,10 +33,13 @@ class SendACmd51(BaseState):
                 print()
 
             # Only top bit of last byte (end bit) so skip
-            scr = int.from_bytes(dat[:10], "big")
+            scr = int.from_bytes(dat[1:][:10], "big")
+
+            print("SCR: ", hex(scr))
 
             #TODO: is this csr?? or scr??
-            s = CSRRegister(scr)
+            s = SCRRegister(scr)
+            iface.card_scr = s
             print(s)
             return True
 
